@@ -1,31 +1,33 @@
-// server.js
+const http = require('http');
 const WebSocket = require('ws');
-const PORT = 8080; // or process.env.PORT if hosting on a service like Fly.io
 
-// Create a WebSocket Server
-const wss = new WebSocket.Server({ port: PORT }, () => {
-  console.log(`WebSocket server running on port ${PORT}`);
+// Use port from Fly, or default to 3000 if not set
+const PORT = process.env.PORT || 3000;
+
+// Create an HTTP server
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Fly.io WebSocket server is running!\n');
 });
 
+// Attach WebSocket.Server to the same HTTP server
+const wss = new WebSocket.Server({ server });
+
+// On WebSocket connection
 wss.on('connection', (ws) => {
-  console.log('[Server] A client connected!');
-
+  console.log('[Server] A client connected.');
   ws.on('message', (msg) => {
-    console.log('[Server] Received from client:', msg.toString());
-    // When the client clicks the button, it sends a message here.
-
-    // 50/50 chance
-    const random = Math.random(); // 0 to 1
-    if (random < 0.5) {
-      // Send "jump" instruction
+    console.log('[Server] Received:', msg.toString());
+    // Example 50/50 logic
+    if (Math.random() < 0.5) {
       ws.send('jump');
     } else {
-      // Send "nojump" instruction
       ws.send('nojump');
     }
   });
+});
 
-  ws.on('close', () => {
-    console.log('[Server] A client disconnected.');
-  });
+// Listen on 0.0.0.0:PORT
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[Server] Listening on 0.0.0.0:${PORT}`);
 });
