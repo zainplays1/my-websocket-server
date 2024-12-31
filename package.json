@@ -1,10 +1,13 @@
 {
   "name": "my-websocket-server",
   "version": "1.0.0",
+  "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "deploy": "fly deploy --local-only",
+    "redeploy": "fly deploy --force"
   },
   "dependencies": {
-    "ws": "^8.13.0"
+    "ws": "^8.16.0"
   }
 }
