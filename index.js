@@ -14,22 +14,17 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server });
 
+function clearAltCache() {
+    availableNumbers = [];
+    nextAltNumber = 1;
+    console.log('[Server] Alt cache cleared');
+}
+
 function getMainClient() {
     for (let [client, info] of connections.entries()) {
         if (info.role === 'main') return client;
     }
     return null;
-}
-
-function reassignRoles() {
-    const mainClient = getMainClient();
-    // If no main exists, promote the oldest alt to main
-    if (!mainClient && connections.size > 0) {
-        const oldestClient = connections.keys().next().value;
-        connections.set(oldestClient, { role: 'main', number: null });
-        oldestClient.send('role:main');
-        console.log('[Server] Promoted oldest alt to main');
-    }
 }
 
 wss.on('connection', (ws) => {
@@ -68,7 +63,15 @@ wss.on('connection', (ws) => {
 
         // Handle commands from main
         if (connections.get(ws).role === 'main' && msg.startsWith('command:')) {
-            // Broadcast to all alts
+            const commandData = JSON.parse(msg.slice(8));
+            
+            // Handle clear cache command
+            if (commandData.command === 'clearCache') {
+                clearAltCache();
+                return;
+            }
+
+            // Broadcast other commands to alts
             for (let [client, info] of connections.entries()) {
                 if (info.role === 'alt' && client.readyState === WebSocket.OPEN) {
                     client.send(msg);
@@ -85,17 +88,12 @@ wss.on('connection', (ws) => {
             // If it was an alt, make its number available again
             if (info.role === 'alt') {
                 availableNumbers.push(info.number);
-                availableNumbers.sort((a, b) => a - b); // Keep sorted for tidiness
+                availableNumbers.sort((a, b) => a - b);
             }
             
             // Remove from connections
             connections.delete(ws);
             
-            // If it was the main, reassign roles
-            if (info.role === 'main') {
-                reassignRoles();
-            }
-
             // Log the new state
             console.log('\n=== Current Connections ===');
             for (let [client, info] of connections.entries()) {
