@@ -1,70 +1,132 @@
-/* index.js - Node.js server with commands + settings */
-
 const http = require('http');
 const WebSocket = require('ws');
-
 const PORT = process.env.PORT || 3000;
 
-// Track the main
-let mainAssigned = false;
+class AltController {
+    constructor() {
+        this.mainClient = null;
+        this.altClients = new Map(); // Maps WebSocket clients to their alt numbers
+        this.nextAltNumber = 1;
+        this.disconnectedAltNumbers = []; // Track disconnected alt numbers for reuse
+    }
 
-// Count how many alts joined (for alt1, alt2, alt3, etc.)
-let altCount = 0;
+    assignMain(ws) {
+        this.mainClient = ws;
+        ws.isMain = true;
+        ws.send('role:main');
+        console.log('[Server] Assigned new main client');
+    }
 
+    assignAlt(ws) {
+        // Reuse disconnected alt numbers if available
+        let altNumber;
+        if (this.disconnectedAltNumbers.length > 0) {
+            altNumber = this.disconnectedAltNumbers.shift();
+        } else {
+            altNumber = this.nextAltNumber++;
+        }
+
+        ws.isMain = false;
+        ws.altNumber = altNumber;
+        this.altClients.set(ws, altNumber);
+        ws.send(`role:alt${altNumber}`);
+        console.log(`[Server] Assigned client as ALT #${altNumber}`);
+        
+        // Log current state
+        this.logState();
+    }
+
+    handleDisconnect(ws) {
+        if (ws.isMain) {
+            this.mainClient = null;
+            console.log('[Server] Main client disconnected');
+        } else {
+            const altNumber = this.altClients.get(ws);
+            if (altNumber) {
+                // Store the disconnected alt number for reuse
+                this.disconnectedAltNumbers.push(altNumber);
+                // Sort to keep numbers ordered
+                this.disconnectedAltNumbers.sort((a, b) => a - b);
+                this.altClients.delete(ws);
+                console.log(`[Server] Alt #${altNumber} disconnected`);
+            }
+        }
+        
+        // Log current state after disconnect
+        this.logState();
+    }
+
+    broadcastCommand(command) {
+        // Send command to all connected clients
+        [...this.altClients.keys()].forEach(client => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(command);
+            }
+        });
+    }
+
+    logState() {
+        console.log('\n=== Current Server State ===');
+        console.log('Main Client:', this.mainClient ? 'Connected' : 'Not Connected');
+        console.log('Connected Alts:', this.altClients.size);
+        console.log('Available Alt Numbers:', [...this.disconnectedAltNumbers]);
+        console.log('Next Alt Number:', this.nextAltNumber);
+        console.log('========================\n');
+    }
+}
+
+// Create server and controller
 const server = http.createServer((req, res) => {
-  res.writeHead(200, {'Content-Type': 'text/plain'});
-  res.end('Main & Alts WebSocket Server with Commands\n');
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end('Alt Control WebSocket Server\n');
 });
 
 const wss = new WebSocket.Server({ server });
+const controller = new AltController();
 
-// On each new client connection:
+// Handle WebSocket connections
 wss.on('connection', (ws) => {
-  console.log('[Server] A client connected.');
+    console.log('[Server] New client connected');
 
-  // Assign role
-  if (!mainAssigned) {
-    // This is the main
-    mainAssigned = true;
-    ws.isMain = true;
-    console.log('[Server] Assigned this client as MAIN.');
-    ws.send('role:main'); // The client script sees "role:main"
-  } else {
-    // This is an alt
-    altCount++;
-    ws.isMain = false;
-    ws.altNumber = altCount;
-    console.log(`[Server] Assigned this client as ALT #${altCount}`);
-    ws.send(`role:alt${altCount}`);
-  }
+    // Assign role based on current state
+    if (!controller.mainClient) {
+        controller.assignMain(ws);
+    } else {
+        controller.assignAlt(ws);
+    }
 
-  // When a client sends a message (commands, etc.)
-  ws.on('message', (data) => {
-    const msg = data.toString();
-    console.log('[Server] Received:', msg);
+    // Handle messages
+    ws.on('message', (data) => {
+        const msg = data.toString();
+        console.log('[Server] Received:', msg);
 
-    // If main is sending a command like "command: line" or "command: chat:..."
-    if (ws.isMain && msg.startsWith('command:')) {
-      // Broadcast the command to everyone (including main, though main can ignore or handle it differently if desired)
-      wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(msg);
+        if (ws.isMain && msg.startsWith('command:')) {
+            controller.broadcastCommand(msg);
         }
-      });
-    }
-  });
+    });
 
-  // If client disconnects
-  ws.on('close', () => {
-    console.log('[Server] A client disconnected.');
-    if (ws.isMain) {
-      mainAssigned = false;
-      console.log('[Server] The main client left. Resetting mainAssigned.');
-    }
-    // We do NOT reset altCount, so new alts keep incrementing (alt1, alt2, alt3,...).
-  });
+    // Handle disconnections
+    ws.on('close', () => {
+        controller.handleDisconnect(ws);
+    });
+
+    // Handle errors
+    ws.on('error', (error) => {
+        console.error('[Server] WebSocket error:', error);
+        controller.handleDisconnect(ws);
+    });
 });
 
+// Start server
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} (Fly.io / 0.0.0.0)`);
+    console.log(`[Server] Listening on port ${PORT}`);
+});
+
+// Handle process termination
+process.on('SIGTERM', () => {
+    console.log('[Server] SIGTERM received. Closing server...');
+    wss.close(() => {
+        console.log('[Server] Server closed');
+        process.exit(0);
+    });
 });
