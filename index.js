@@ -1,29 +1,41 @@
-// index.js (Node.js)
+// index.js (Node on Fly.io)
 const http = require('http');
 const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 3000;
+let mainAssigned = false;
 
-// Create an HTTP server so Fly sees a health-check response
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('WebSocket multi-client jump server\n');
+  res.writeHead(200, {'Content-Type': 'text/plain'});
+  res.end('Main & Alts WebSocket Server\n');
 });
 
-// Attach a WebSocket.Server to the HTTP server
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws) => {
   console.log('[Server] A client connected.');
 
-  ws.on('message', (data) => {
-    console.log('[Server] Received message:', data.toString());
+  if (!mainAssigned) {
+    mainAssigned = true;
+    ws.isMain = true;
+    console.log('[Server] Assigned this client as MAIN.');
+    ws.send('role:main');
+  } else {
+    ws.isMain = false;
+    console.log('[Server] Assigned this client as ALT.');
+    ws.send('role:alt');
+  }
 
-    // If the message is "jump-button", broadcast "jump" to ALL clients
-    if (data.toString() === 'jump-button') {
+  ws.on('message', (data) => {
+    const msg = data.toString();
+    console.log('[Server] Received:', msg);
+
+    // Only the main can trigger the jump broadcast
+    if (ws.isMain && msg === 'jump-button') {
+      console.log('[Server] Main triggered jump → broadcasting');
       wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-          client.send('jump'); 
+          client.send('jump');
         }
       });
     }
